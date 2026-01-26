@@ -2,3 +2,5 @@ pyrofork
 aiohttp
 TgCrypto
 uvloop
+motor
+pymongo
