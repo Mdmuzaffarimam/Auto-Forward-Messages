@@ -7,12 +7,7 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-START_TEXT = """<b>👋 Hello! I am MRN_Forward_Bot.</b>
-
-I Can Forward Videos And Documents From Multiple Channels To Multiple Other Channels, Filtering Out Unwanted Content.
-
-<b>Maintained By:</b> <a href="https://t.me/Mrn_Officialx">Mrn_Officialx</a>
-"""
+START_TEXT = """<b>👋ʜᴇʟʟᴏ {}, {}\n\nɪ ᴄᴀɴ ғᴏʀᴡᴀʀᴅ ᴠɪᴅᴇᴏs ᴀɴᴅ ᴅᴏᴄᴜᴍᴇɴᴛs ғʀᴏᴍ ᴍᴜʟᴛɪᴘʟᴇ ᴄʜᴀɴɴᴇʟs ᴛᴏ ᴍᴜʟᴛɪᴘʟᴇ ᴏᴛʜᴇʀ ᴄʜᴀɴɴᴇʟs, ғɪʟᴛᴇʀɪɴɢ ᴏᴜᴛ ᴜɴᴡᴀɴᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ.!! 😍\n<blockquote>🌿 ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href="https://t.me/Mrn_Officialx">Mrn_Officialx</a></blockquote></b>"""
 
 HELP_TEXT = """<b>ℹ️ Help Menu</b>
 
@@ -36,19 +31,22 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 <b>Channel:</b> @Mrn_Officialx
 """
 
-ABOUT_TEXT = """<b>🤖 About Mrn_Officialx</b>
+ABOUT_TEXT = """<b>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟
+├⍟ 🎭 Mʏ Nᴀᴍᴇ : <a href=https://t.me/{}>{}</a>
+├⍟ 🇮🇳 Cʀᴇᴀᴛᴏʀ : <a href={}>𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a> 
+├⍟ 📚 Lɪʙʀᴀʀʏ : <a href='https://docs.pyrogram.org/'>ᴘʏʀᴏɢʀᴀᴍ</a>
+├⍟ 🍿 Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/download/releases/3.0/'>ᴘʏᴛʜᴏɴ 𝟹</a> 
+├⍟ 🐍 DᴀᴛᴀBᴀsᴇ : <a href='https://www.mongodb.com/'>ᴍᴏɴɢᴏ ᴅʙ</a> 
+├⍟ ⚙️ Bᴏᴛ Sᴇʀᴠᴇʀ : <a href='https://heroku.com/'>ʜᴇʀᴏᴋᴜ</a> 
+├⍟ 🥶 Bᴜɪʟᴅ Sᴛᴀᴛᴜs : ᴠ𝟸.𝟶 [ ꜱᴛᴀʙʟᴇ ]
+╰───────────────⍟</b>
 
-<b>Name:</b> MRN Forward Bot
-<b>Version:</b> 2.0
-<b>Channel:</b> <a href="https://t.me/Mrn_Officialx">Mrn_Officialx</a>
-<b>Repository:</b> <a href="https://t.me/mimam_ripper">𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a>
-
-<b>Features:</b>
+<b>Features:
 - Multi-Source to Multi-Target
 - Video & Document Filter
 - FloodWait Handling
 - MongoDB Database
-- Queue System
+- Queue System</b>
 """
 
 BUTTONS = InlineKeyboardMarkup(
