@@ -162,9 +162,7 @@ async def process_buffered_messages(source_chat_id):
 
 @Client.on_message(
     filters.channel & 
-    (filters.video | filters.document | filters.photo | filters.audio) & 
-    ~filters.sticker & 
-    ~filters.animation
+    (filters.video | filters.document | filters.photo | filters.audio | filters.sticker | filters.animation | filters.text)
 )
 async def forward_content(client, message):
     try:
