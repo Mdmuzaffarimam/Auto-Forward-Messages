@@ -28,7 +28,7 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 2. Use /set command to link source to target channels.
 3. I Will Automatically Forward Videos And Documents!</b>
 
-<b>Channel:</b> @Mrn_Officialx</b>
+<b>Channel: @Mrn_Officialx</b>
 """
 
 ABOUT_TEXT = """<b><blockquote>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟</blockquote>
