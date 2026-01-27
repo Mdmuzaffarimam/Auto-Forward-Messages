@@ -32,8 +32,8 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 """
 
 ABOUT_TEXT = """<b>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟
-├⍟ 🎭 Mʏ Nᴀᴍᴇ : <a href=https://t.me/{}>{}</a>
-├⍟ 🇮🇳 Cʀᴇᴀᴛᴏʀ : <a href={}>𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a> 
+├⍟ 🎭 Mʏ Nᴀᴍᴇ : <a href='https://t.me/MRN_ForwardXBot/'>ᴍʀɴ ғᴏʀᴡᴀʀᴅ ʙᴏᴛ</a>
+├⍟ 🇮🇳 Cʀᴇᴀᴛᴏʀ : <a href='https://t.me/mimam_officialx/'>𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a> 
 ├⍟ 📚 Lɪʙʀᴀʀʏ : <a href='https://docs.pyrogram.org/'>ᴘʏʀᴏɢʀᴀᴍ</a>
 ├⍟ 🍿 Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/download/releases/3.0/'>ᴘʏᴛʜᴏɴ 𝟹</a> 
 ├⍟ 🐍 DᴀᴛᴀBᴀsᴇ : <a href='https://www.mongodb.com/'>ᴍᴏɴɢᴏ ᴅʙ</a> 
@@ -53,7 +53,7 @@ BUTTONS = InlineKeyboardMarkup(
     [
         [
             InlineKeyboardButton("📢 Channel", url="https://t.me/Mrn_Officialx"),
-            InlineKeyboardButton("🥰 𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤", url="https://t.me/mimam_ripper")
+            InlineKeyboardButton("🥰 𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤", url="https://t.me/mimam_officialx")
         ]
     ]
 )
