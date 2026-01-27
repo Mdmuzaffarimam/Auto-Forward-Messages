@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 START_TEXT = """<b>👋ʜᴇʟʟᴏ! ɪ ᴀᴍ ᴍʀɴ_ғᴏʀᴡᴀʀᴅ_ʙᴏᴛ.\n\nɪ ᴄᴀɴ ғᴏʀᴡᴀʀᴅ ᴠɪᴅᴇᴏs ᴀɴᴅ ᴅᴏᴄᴜᴍᴇɴᴛs ғʀᴏᴍ ᴍᴜʟᴛɪᴘʟᴇ ᴄʜᴀɴɴᴇʟs ᴛᴏ ᴍᴜʟᴛɪᴘʟᴇ ᴏᴛʜᴇʀ ᴄʜᴀɴɴᴇʟs, ғɪʟᴛᴇʀɪɴɢ ᴏᴜᴛ ᴜɴᴡᴀɴᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ.!! 😍\n<blockquote>🌿 ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href="https://t.me/Mrn_Officialx">Mrn_Officialx</a></blockquote></b>"""
 
-HELP_TEXT = """<b>ℹ️ Help Menu</b>
+HELP_TEXT = """<b>ℹ️ Help Menu
 
-I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channels.
+I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channels.</b>
 
-<b>Commands:</b>
+<b>Commands:
 /start - Check If I Am Alive.
 /help - Show This Help Message.
 /about - Show Information About Me.
@@ -21,12 +21,12 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 /remove_target &lt;source_id&gt; &lt;target_id&gt; - Remove A Target From Source
 /remove_source &lt;source_id&gt; - Remove Source
 /list - View All Set Channels 
-/clear - Clear All Mappings
+/clear - Clear All Mappings</b>
 
-<b>How to use:</b>
+<b>How to use:
 1. Add Me To Source Channels And Target Channels As Admin.
 2. Use /set command to link source to target channels.
-3. I Will Automatically Forward Videos And Documents!
+3. I Will Automatically Forward Videos And Documents!</b>
 
 <b>Channel:</b> @Mrn_Officialx
 """
@@ -39,15 +39,13 @@ ABOUT_TEXT = """<b>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟
 ├⍟ 🐍 DᴀᴛᴀBᴀsᴇ : <a href='https://www.mongodb.com/'>ᴍᴏɴɢᴏ ᴅʙ</a> 
 ├⍟ ⚙️ Bᴏᴛ Sᴇʀᴠᴇʀ : <a href='https://heroku.com/'>ʜᴇʀᴏᴋᴜ</a> 
 ├⍟ 🥶 Bᴜɪʟᴅ Sᴛᴀᴛᴜs : ᴠ𝟸.𝟶 [ ꜱᴛᴀʙʟᴇ ]
-╰───────────────⍟</b>
-
-<b>Features:
-- Multi-Source to Multi-Target
-- Video & Document Filter
-- FloodWait Handling
-- MongoDB Database
-- Queue System</b>
-"""
+├⍟ Features:
+├⍟ Multi-Source to Multi-Target
+├⍟ Video & Document Filter
+├⍟ FloodWait Handling
+├⍟ MongoDB Database
+├⍟ Queue System
+╰───────────────⍟</b>"""
 
 BUTTONS = InlineKeyboardMarkup(
     [
