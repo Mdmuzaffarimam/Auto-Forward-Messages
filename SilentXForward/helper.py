@@ -28,24 +28,24 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 2. Use /set command to link source to target channels.
 3. I Will Automatically Forward Videos And Documents!</b>
 
-<b>Channel:</b> @Mrn_Officialx
+<b>Channel:</b> @Mrn_Officialx</b>
 """
 
-ABOUT_TEXT = """<b>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟
-├⍟ 🎭 Mʏ Nᴀᴍᴇ : <a href='https://t.me/MRN_ForwardXBot/'>ᴍʀɴ ғᴏʀᴡᴀʀᴅ ʙᴏᴛ</a>
-├⍟ 🇮🇳 Cʀᴇᴀᴛᴏʀ : <a href='https://t.me/mimam_officialx/'>𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a> 
-├⍟ 📚 Lɪʙʀᴀʀʏ : <a href='https://docs.pyrogram.org/'>ᴘʏʀᴏɢʀᴀᴍ</a>
-├⍟ 🍿 Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/download/releases/3.0/'>ᴘʏᴛʜᴏɴ 𝟹</a> 
-├⍟ 🐍 DᴀᴛᴀBᴀsᴇ : <a href='https://www.mongodb.com/'>ᴍᴏɴɢᴏ ᴅʙ</a> 
-├⍟ ⚙️ Bᴏᴛ Sᴇʀᴠᴇʀ : <a href='https://heroku.com/'>ʜᴇʀᴏᴋᴜ</a> 
-├⍟ 🥶 Bᴜɪʟᴅ Sᴛᴀᴛᴜs : ᴠ𝟸.𝟶 [ ꜱᴛᴀʙʟᴇ ]
-├⍟ Features:
-├⍟ Multi-Source to Multi-Target
-├⍟ Video & Document Filter
-├⍟ FloodWait Handling
-├⍟ MongoDB Database
-├⍟ Queue System
-╰───────────────⍟</b>"""
+ABOUT_TEXT = """<b><blockquote>╭────[ ᴍʏ ᴅᴇᴛᴀɪʟs ]────⍟</blockquote>
+<blockquote>├⍟ 🎭 Mʏ Nᴀᴍᴇ : <a href='https://t.me/MRN_ForwardXBot/'>ᴍʀɴ ғᴏʀᴡᴀʀᴅ ʙᴏᴛ</a></blockquote>
+<blockquote>├⍟ 🇮🇳 Cʀᴇᴀᴛᴏʀ : <a href='https://t.me/mimam_officialx/'>𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a></blockquote>
+<blockquote>├⍟ 📚 Lɪʙʀᴀʀʏ : <a href='https://docs.pyrogram.org/'>ᴘʏʀᴏɢʀᴀᴍ</a></blockquote>
+<blockquote>├⍟ 🍿 Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/download/releases/3.0/'>ᴘʏᴛʜᴏɴ 𝟹</a></blockquote>
+<blockquote>├⍟ 🐍 DᴀᴛᴀBᴀsᴇ : <a href='https://www.mongodb.com/'>ᴍᴏɴɢᴏ ᴅʙ</a></blockquote>
+<blockquote>├⍟ ⚙️ Bᴏᴛ Sᴇʀᴠᴇʀ : <a href='https://heroku.com/'>ʜᴇʀᴏᴋᴜ</a></blockquote>
+<blockquote>├⍟ 🥶 Bᴜɪʟᴅ Sᴛᴀᴛᴜs : ᴠ𝟸.𝟶 [ ꜱᴛᴀʙʟᴇ ]</blockquote>
+<blockquote>├⍟ Features:</blockquote>
+<blockquote>├⍟ Multi-Source to Multi-Target</blockquote>
+<blockquote>├⍟ Video & Document Filter</blockquote>
+<blockquote>├⍟ FloodWait Handling</blockquote>
+<blockquote>├⍟ MongoDB Database</blockquote>
+<blockquote>├⍟ Queue System</blockquote>
+<blockquote>╰───────────────⍟</b></blockquote>"""
 
 BUTTONS = InlineKeyboardMarkup(
     [
