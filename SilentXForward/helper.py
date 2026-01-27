@@ -38,7 +38,7 @@ I Am An Auto-Forward Bot. I Forward Files From Source Channels To Target Channel
 
 ABOUT_TEXT = """<b>🤖 About Mrn_Officialx</b>
 
-<b>Name:</b> MRN_Forward_Bot
+<b>Name:</b> MRN Forward Bot
 <b>Version:</b> 2.0
 <b>Channel:</b> <a href="https://t.me/Mrn_Officialx">Mrn_Officialx</a>
 <b>Repository:</b> <a href="https://t.me/mimam_ripper">𝄟͢🦋⃟≛⃝ 𝐌𝐮𝐳𝐚𝐟𝐟𝐚𝐫 𝄟⃝❤</a>
