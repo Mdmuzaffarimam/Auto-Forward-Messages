@@ -2,72 +2,82 @@ import time
 import asyncio
 import logging
 import threading
-import pyrogram.utils
 import urllib.request
+
 from aiohttp import web
 from pyrogram import Client
-from SilentXForward.forward import start_processor
 from SilentXForward import web_server
-from config import API_ID, API_HASH, BOT_TOKEN, TG_WORKERS, WEB_SERVER, PORT, APP_URL
+from config import (
+    API_ID,
+    API_HASH,
+    BOT_TOKEN,
+    TG_WORKERS,
+    WEB_SERVER,
+    PORT,
+    APP_URL
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ------------------ PING LOOP (KOYEB SLEEP FIX) ------------------
 
 def ping_loop():
     while True:
         try:
-            with urllib.request.urlopen(APP_URL, timeout=10) as response:
-                if response.status == 200:
-                    logger.info("✅ Ping Successful")
-                else:
-                    logger.error(f"⚠️ Ping Failed: {response.status}")
+            if APP_URL:
+                with urllib.request.urlopen(APP_URL, timeout=10) as r:
+                    if r.status == 200:
+                        logger.info("✅ Ping successful")
+                    else:
+                        logger.warning(f"⚠️ Ping status: {r.status}")
         except Exception as e:
-            logger.debug(f"❌ Exception During Ping: {e}")
+            logger.debug(f"Ping error: {e}")
         time.sleep(300)
 
 if APP_URL:
     threading.Thread(target=ping_loop, daemon=True).start()
-    
+
+# ------------------ WEB SERVER ------------------
+
 async def create_server():
     try:
-        app = web.AppRunner(await web_server())
-        await app.setup()
-        await web.TCPSite(app, "0.0.0.0", PORT).start()
-        logger.info(f"Web server started on port {PORT}")
+        runner = web.AppRunner(await web_server())
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+        logger.info(f"🌐 Web server started on port {PORT}")
     except Exception as e:
-        logger.error(f"Failed to start web server: {e}")
+        logger.error(f"Web server failed: {e}")
+
+# ------------------ BOT CLASS ------------------
 
 class Bot(Client):
     def __init__(self):
         super().__init__(
-            "SilentXForwardBot",
+            name="SilentXForwardBot",
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
             workers=TG_WORKERS,
             sleep_threshold=10,
-            plugins={"root": "SilentXForward"}
+            plugins={"root": "SilentXForward"}  # 👈 forwarding yahin se hoga
         )
 
-    async def start(self, *args, **kwargs):
-        await super().start(*args, **kwargs)
+    async def start(self):
+        await super().start()
         me = await self.get_me()
-        logger.info(f"Bot Started! Name: {me.first_name} (@{me.username})")
-        
+        logger.info(f"🤖 Bot Started: {me.first_name} (@{me.username})")
+
         if WEB_SERVER:
             await create_server()
-            
-        self.processor_tasks = await start_processor(self)
-        sources = sources or []
-logger.info(f"✅ Auto Forwarding Started For {len(sources)} Sources")
 
-    async def stop(self, *args, **kwargs):
-        logger.info("🛑 Stopping Auto Forwarding...")
-        for task in self.processor_tasks.values():
-            task.cancel()
-        await super().stop(*args, **kwargs)
-        logger.info("Bot Stopped")
+    async def stop(self, *args):
+        logger.info("🛑 Bot stopping...")
+        await super().stop()
+        logger.info("✅ Bot stopped cleanly")
 
-if __name__ == '__main__':
+# ------------------ RUN ------------------
+
+if __name__ == "__main__":
     Bot().run()
