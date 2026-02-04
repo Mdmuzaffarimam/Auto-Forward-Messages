@@ -11,33 +11,23 @@ QUEUE_WORKERS = 3
 TARGET_CONCURRENCY = 3
 MSG_DELAY = 0.1
 TARGET_DELAY = 0.15
-# =========================================
+# ==========================================
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("SilentXForward")
+logger = logging.getLogger(__name__)
 
 message_queue = asyncio.Queue()
 message_buffer = defaultdict(list)
 buffer_tasks = {}
 
-# ================= SAFE DB FETCH =================
-async def safe_get_mappings(source_chat_id):
-    try:
-        data = await database.get_all_targets_for_source(source_chat_id)
-        if not data:
-            return []
-        return data
-    except Exception as e:
-        logger.error(f"DB error for {source_chat_id}: {e}")
-        return []
-
-# ================= FLOOD SAFE CALL =================
+# ================= FLOOD HANDLER =================
 async def handle_flood(func, **kwargs):
-    for attempt in range(3):
+    retries = 3
+    for attempt in range(retries):
         try:
             return await func(**kwargs)
         except FloodWait as e:
-            logger.warning(f"FloodWait {e.value}s")
+            logger.warning(f"FloodWait: sleeping {e.value}s")
             await asyncio.sleep(e.value + 1)
         except RPCError as e:
             logger.error(f"RPCError: {e}")
@@ -50,12 +40,18 @@ async def handle_flood(func, **kwargs):
 # ================= SINGLE FORWARD =================
 async def forward_single_message(client, message, chat_id):
     try:
-        await handle_flood(
-            client.copy_message,
-            chat_id=chat_id,
-            from_chat_id=message.chat.id,
-            message_id=message.id,
-        )
+        kwargs = {
+            "chat_id": chat_id,
+            "from_chat_id": message.chat.id,
+            "message_id": message.id,
+        }
+
+        if message.caption:
+            kwargs["caption"] = message.caption
+            if message.caption_entities:
+                kwargs["caption_entities"] = message.caption_entities
+
+        await handle_flood(client.copy_message, **kwargs)
         return True
     except Exception as e:
         logger.error(f"Forward failed {message.id} -> {chat_id}: {e}")
@@ -63,13 +59,13 @@ async def forward_single_message(client, message, chat_id):
 
 # ================= BUFFER FORWARD =================
 async def forward_buffered_messages(client, messages, chat_id):
-    ok = 0
+    success = 0
     for msg in sorted(messages, key=lambda m: m.id):
         if await forward_single_message(client, msg, chat_id):
-            ok += 1
+            success += 1
         await asyncio.sleep(MSG_DELAY)
-    logger.info(f"Buffered {ok}/{len(messages)} -> {chat_id}")
-    return ok > 0
+    logger.info(f"Buffered forwarded {success}/{len(messages)} -> {chat_id}")
+    return success > 0
 
 # ================= QUEUE WORKER =================
 async def process_queue(client):
@@ -85,56 +81,52 @@ async def process_queue(client):
         payload, targets, ftype = await message_queue.get()
         failed = []
 
-        tasks = [forward_target(t, payload, ftype) for t in targets]
+        tasks = [forward_target(tid, payload, ftype) for tid in targets]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for t, r in zip(targets, results):
-            if r is not True:
-                failed.append(t)
+        for tid, res in zip(targets, results):
+            if res is not True:
+                failed.append(tid)
 
         if failed:
-            logger.warning(f"Retrying {len(failed)} targets")
+            logger.info(f"Retrying {len(failed)} targets")
             await message_queue.put((payload, failed, ftype))
 
         message_queue.task_done()
         await asyncio.sleep(TARGET_DELAY)
 
-# ================= START WORKERS =================
+# ================= START PROCESSORS =================
 async def start_processor(client):
-    for _ in range(QUEUE_WORKERS):
-        asyncio.create_task(process_queue(client))
+    tasks = []
+    for i in range(QUEUE_WORKERS):
+        tasks.append(asyncio.create_task(process_queue(client)))
     logger.info(f"{QUEUE_WORKERS} queue workers started")
+    return tasks
 
-# ================= BUFFER PROCESSOR =================
+# ================= BUFFER HANDLER =================
 async def process_buffered_messages(source_chat_id):
-    while True:
-        await asyncio.sleep(BUFFER_DELAY)
+    await asyncio.sleep(BUFFER_DELAY)
 
-        messages = message_buffer.get(source_chat_id)
-        if not messages:
-            break
+    messages = message_buffer.get(source_chat_id)
+    if not messages:
+        return
 
-        mappings = await safe_get_mappings(source_chat_id)
-        if not mappings:
-            logger.warning(f"No targets for source {source_chat_id}")
-            message_buffer[source_chat_id].clear()
-            continue
-
+    try:
+        mappings = await database.get_all_targets_for_source(source_chat_id)
         for mapping in mappings:
-            targets = mapping.get("target_ids") or []
+            targets = mapping.get("target_ids", [])
             if targets:
-                await message_queue.put(
-                    (messages.copy(), targets, "buffered")
-                )
+                await message_queue.put((messages.copy(), targets, "buffered"))
                 logger.info(
-                    f"Queued {len(messages)} msgs -> {len(targets)} targets"
+                    f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets"
                 )
+    except Exception as e:
+        logger.error(f"Buffer process error: {e}")
+    finally:
+        message_buffer.pop(source_chat_id, None)
+        buffer_tasks.pop(source_chat_id, None)
 
-        message_buffer[source_chat_id].clear()
-
-    buffer_tasks.pop(source_chat_id, None)
-
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGE LISTENER =================
 @Client.on_message(
     filters.channel &
     (filters.video | filters.document | filters.photo |
@@ -145,10 +137,11 @@ async def forward_content(client, message):
         cid = message.chat.id
         message_buffer[cid].append(message)
 
-        # ❌ NEVER cancel task (fix random skip)
-        if cid not in buffer_tasks:
-            buffer_tasks[cid] = asyncio.create_task(
-                process_buffered_messages(cid)
-            )
-    except Exception:
-        logger.exception("Message handler error")
+        if cid in buffer_tasks:
+            buffer_tasks[cid].cancel()
+
+        buffer_tasks[cid] = asyncio.create_task(
+            process_buffered_messages(cid)
+        )
+    except Exception as e:
+        logger.error("Handler error", exc_info=True)
