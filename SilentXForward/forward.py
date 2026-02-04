@@ -133,8 +133,16 @@ async def process_buffered_messages(source_chat_id):
     if not messages:
         return
 
-    mappings = await database.get_all_targets_for_source(source_chat_id)
-    for mapping in mappings:
+    mappings = await database.get_all_targets_for_source(source_chat_id) or []
+
+if not mappings:
+    logger.warning(f"No targets found for source {source_chat_id}")
+    return
+
+for mapping in mappings:
+    targets = mapping.get("target_ids", [])
+    if targets:
+        await message_queue.put((messages.copy(), targets, "buffered"))
         targets = mapping.get("target_ids", [])
         if targets:
             await message_queue.put((messages.copy(), targets, "buffered"))
