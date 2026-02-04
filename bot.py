@@ -59,8 +59,7 @@ class Bot(Client):
             await create_server()
             
         self.processor_tasks = await start_processor(self)
-        sources = sources or []
-logger.info(f"✅ Auto Forwarding Started For {len(sources)} Sources")
+        logger.info(f"✅ Auto Forwarding Started For {len(self.processor_tasks)} Sources")
 
     async def stop(self, *args, **kwargs):
         logger.info("🛑 Stopping Auto Forwarding...")
