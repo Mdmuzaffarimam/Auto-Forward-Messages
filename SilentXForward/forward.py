@@ -6,21 +6,32 @@ from pyrogram.errors import FloodWait, RPCError
 from SilentXForward import database
 
 # ================= CONFIG =================
-BUFFER_DELAY = 2              # seconds to wait for batch
-QUEUE_WORKERS = 3             # parallel queue processors
-TARGET_CONCURRENCY = 3        # parallel target forwards
-MSG_DELAY = 0.1               # delay between files
-TARGET_DELAY = 0.15           # delay between batches
-# ==========================================
+BUFFER_DELAY = 2
+QUEUE_WORKERS = 3
+TARGET_CONCURRENCY = 3
+MSG_DELAY = 0.1
+TARGET_DELAY = 0.15
+# =========================================
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("SilentXForward")
 
 message_queue = asyncio.Queue()
 message_buffer = defaultdict(list)
 buffer_tasks = {}
 
-# ================= FLOOD HANDLER =================
+# ================= SAFE DB FETCH =================
+async def safe_get_mappings(source_chat_id):
+    try:
+        data = await database.get_all_targets_for_source(source_chat_id)
+        if not data:
+            return []
+        return data
+    except Exception as e:
+        logger.error(f"DB error for {source_chat_id}: {e}")
+        return []
+
+# ================= FLOOD SAFE CALL =================
 async def handle_flood(func, **kwargs):
     for attempt in range(3):
         try:
@@ -36,7 +47,7 @@ async def handle_flood(func, **kwargs):
             await asyncio.sleep(2 ** attempt)
     raise Exception("Max retries exceeded")
 
-# ================= SINGLE MESSAGE FORWARD =================
+# ================= SINGLE FORWARD =================
 async def forward_single_message(client, message, chat_id):
     try:
         await handle_flood(
@@ -52,14 +63,13 @@ async def forward_single_message(client, message, chat_id):
 
 # ================= BUFFER FORWARD =================
 async def forward_buffered_messages(client, messages, chat_id):
-    success = 0
+    ok = 0
     for msg in sorted(messages, key=lambda m: m.id):
         if await forward_single_message(client, msg, chat_id):
-            success += 1
+            ok += 1
         await asyncio.sleep(MSG_DELAY)
-
-    logger.info(f"Buffered {success}/{len(messages)} -> {chat_id}")
-    return success > 0
+    logger.info(f"Buffered {ok}/{len(messages)} -> {chat_id}")
+    return ok > 0
 
 # ================= QUEUE WORKER =================
 async def process_queue(client):
@@ -91,7 +101,7 @@ async def process_queue(client):
 
 # ================= START WORKERS =================
 async def start_processor(client):
-    for i in range(QUEUE_WORKERS):
+    for _ in range(QUEUE_WORKERS):
         asyncio.create_task(process_queue(client))
     logger.info(f"{QUEUE_WORKERS} queue workers started")
 
@@ -104,25 +114,27 @@ async def process_buffered_messages(source_chat_id):
         if not messages:
             break
 
-        try:
-            mappings = await database.get_all_targets_for_source(source_chat_id)
-            for mapping in mappings:
-                targets = mapping.get("target_ids", [])
-                if targets:
-                    await message_queue.put(
-                        (messages.copy(), targets, "buffered")
-                    )
-                    logger.info(
-                        f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets"
-                    )
-        except Exception as e:
-            logger.error(f"Buffer error: {e}")
-        finally:
+        mappings = await safe_get_mappings(source_chat_id)
+        if not mappings:
+            logger.warning(f"No targets for source {source_chat_id}")
             message_buffer[source_chat_id].clear()
+            continue
+
+        for mapping in mappings:
+            targets = mapping.get("target_ids") or []
+            if targets:
+                await message_queue.put(
+                    (messages.copy(), targets, "buffered")
+                )
+                logger.info(
+                    f"Queued {len(messages)} msgs -> {len(targets)} targets"
+                )
+
+        message_buffer[source_chat_id].clear()
 
     buffer_tasks.pop(source_chat_id, None)
 
-# ================= MESSAGE LISTENER =================
+# ================= MESSAGE HANDLER =================
 @Client.on_message(
     filters.channel &
     (filters.video | filters.document | filters.photo |
@@ -133,10 +145,10 @@ async def forward_content(client, message):
         cid = message.chat.id
         message_buffer[cid].append(message)
 
-        # IMPORTANT: cancel nahi karte (no random skip)
+        # ❌ NEVER cancel task (fix random skip)
         if cid not in buffer_tasks:
             buffer_tasks[cid] = asyncio.create_task(
                 process_buffered_messages(cid)
             )
     except Exception:
-        logger.exception("Handler error")
+        logger.exception("Message handler error")
