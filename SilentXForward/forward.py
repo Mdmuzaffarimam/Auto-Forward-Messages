@@ -12,17 +12,18 @@ QUEUE_WORKERS = 3
 TARGET_CONCURRENCY = 3
 MSG_DELAY = 0.1
 TARGET_DELAY = 0.15
-# If True, when copy_message or send_video-with-file_id fails to preserve thumbnail,
-# bot will download full video and re-upload it with the thumbnail (heavy).
-REUPLOAD_ON_MISSING_THUMB = True
+
+# If True -> heavy fallback: download full video and re-upload with thumb when needed.
+# This guarantees identical cover but uses bandwidth.
+REUPLOAD_ON_MISSING_THUMB = False
 # ==========================================
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 message_queue = asyncio.Queue()
-message_buffer = defaultdict(list)
-buffer_tasks = {}
+message_buffer = defaultdict(list)  # source_chat_id -> [messages]
+buffer_tasks = {}  # source_chat_id -> asyncio.Task
 
 # ================= FLOOD HANDLER =================
 async def handle_flood(func, **kwargs):
@@ -41,27 +42,25 @@ async def handle_flood(func, **kwargs):
             await asyncio.sleep(2 ** attempt)
     raise Exception("Max retries exceeded")
 
-# ================= HELPER: preserve original cover (full) =================
+# ================= HELPER: preserve original cover =================
 async def _send_preserve_cover(client, message, chat_id, kwargs):
     """
-    Full strategy:
-    1) Try copy_message (fast; usually preserves original thumb).
-    2) If copy_message didn't preserve thumb and source has a thumb:
-       a) Try send_video with source file_id + downloaded thumb.
-       b) If that fails and REUPLOAD_ON_MISSING_THUMB=True: download full video and re-upload with thumb.
-    3) If no thumb available on source, return whether copy_message succeeded.
+    Strategy:
+    - If message.video exists -> use copy_message (preserves original thumb usually).
+    - If message.document with video mime -> try send_video with file_id + thumb (downloaded).
+    - If above fail and REUPLOAD_ON_MISSING_THUMB -> download full video and re-upload with thumb.
+    - Fallback: copy_message.
     """
     thumb_path = None
     forwarded = None
     try:
-        # Attempt 1: copy_message (fast server-side copy)
+        # Try fast copy first
         try:
             forwarded = await handle_flood(client.copy_message, **kwargs)
         except Exception:
-            logger.exception("copy_message failed; will attempt alternative send methods")
-            forwarded = None
+            logger.debug("copy_message failed or raised; will try alternative send methods")
 
-        # If copy_message succeeded, check if forwarded has thumbnail (video/document)
+        # If copy_message succeeded and preserved a thumb, we're done
         if forwarded is not None:
             f_has_thumb = False
             if getattr(forwarded, "video", None) and getattr(forwarded.video, "thumb", None):
@@ -72,12 +71,9 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
             if f_has_thumb:
                 logger.info("copy_message preserved thumbnail")
                 return True
+            logger.info("copy_message did not preserve thumbnail (or no forwarded object) — attempting preserve steps")
 
-            logger.info("copy_message did not preserve thumbnail; attempting preserve steps")
-        else:
-            logger.info("copy_message returned no forwarded message; attempting preserve steps")
-
-        # Find source thumbnail if available
+        # Determine source thumbnail if available
         thumb_media = None
         if getattr(message, "video", None) and getattr(message.video, "thumb", None):
             thumb_media = message.video.thumb
@@ -87,32 +83,32 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
             thumb_media = message.thumbnail
 
         if thumb_media is None:
-            logger.info("No thumbnail found on source message; nothing more to do")
+            logger.info("No thumbnail found on source; returning whether copy_message succeeded")
             return forwarded is not None
 
-        # Download thumbnail
+        # Download thumbnail to temp file
         try:
             thumb_path = await client.download_media(thumb_media)
-            logger.debug(f"Downloaded source thumbnail to {thumb_path}")
+            logger.debug(f"Downloaded thumbnail to {thumb_path}")
         except Exception:
-            logger.exception("Failed to download source thumbnail; aborting preserve attempt")
+            logger.exception("Failed to download thumbnail; aborting preserve-attempt")
             thumb_path = None
             return forwarded is not None
 
-        # Try lightweight send: send_video using source file_id + thumb
+        # Attempt lightweight send using file_id + thumb
         src_vid = getattr(message, "video", None)
         src_doc = getattr(message, "document", None)
 
-        send_kwargs_base = {
+        send_base = {
             "chat_id": chat_id,
             "caption": kwargs.get("caption"),
             "caption_entities": kwargs.get("caption_entities"),
             "supports_streaming": True,
         }
 
-        # If original was video object
+        # If original was a video message
         if src_vid is not None:
-            send_kwargs = send_kwargs_base.copy()
+            send_kwargs = send_base.copy()
             send_kwargs.update({
                 "video": src_vid.file_id,
                 "duration": getattr(src_vid, "duration", None),
@@ -125,11 +121,11 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
                 logger.info("send_video using source file_id + thumb succeeded")
                 return True
             except Exception:
-                logger.exception("send_video with file_id+thumb failed")
+                logger.exception("send_video(file_id+thumb) failed")
 
-        # If original was document with video mime
+        # If original was a document with video mime
         if src_doc is not None and getattr(src_doc, "mime_type", "").startswith("video"):
-            send_kwargs = send_kwargs_base.copy()
+            send_kwargs = send_base.copy()
             send_kwargs.update({
                 "video": src_doc.file_id,
                 "duration": getattr(src_doc, "duration", None),
@@ -142,13 +138,12 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
                 logger.info("send_video using document file_id + thumb succeeded")
                 return True
             except Exception:
-                logger.exception("send_video(document file_id)+thumb failed")
+                logger.exception("send_video(document file_id+thumb) failed")
 
-        # Heavy fallback: download full video and re-upload (only if enabled)
+        # Heavy fallback: download full video and re-upload with thumb (optional)
         if REUPLOAD_ON_MISSING_THUMB:
             logger.info("Attempting heavy re-upload fallback (download full video)")
             try:
-                # Download full media (can be large)
                 video_path = await client.download_media(message)
                 try:
                     send_kwargs = {
@@ -169,9 +164,9 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
                     except Exception:
                         logger.debug("Failed to remove temp video file", exc_info=True)
             except Exception:
-                logger.exception("Heavy re-upload fallback failed")
+                logger.exception("Heavy re-upload failed")
 
-        # Couldn't preserve thumbnail; return whether copy_message at least succeeded
+        # If all else fails, return whether copy_message at least succeeded
         return forwarded is not None
 
     finally:
@@ -235,42 +230,37 @@ async def process_queue(client):
         message_queue.task_done()
         await asyncio.sleep(TARGET_DELAY)
 
-# ================= START/STOP PROCESSORS (call these from your bot) =================
+# ================= START PROCESSORS (backwards-compatible) =================
 async def start_processor(client):
-    tasks = []
+    """
+    Starts QUEUE_WORKERS queue worker tasks and returns a dict of tasks
+    to match existing bot.py usage (so bot can call .values() and cancel them).
+    """
+    tasks = {}
     for i in range(QUEUE_WORKERS):
-        tasks.append(asyncio.create_task(process_queue(client)))
+        t = asyncio.create_task(process_queue(client))
+        tasks[f"worker_{i}"] = t
     logger.info(f"{QUEUE_WORKERS} queue workers started")
     return tasks
 
-async def start_forwarder(client):
+# ================= STOP helper (optional) =================
+async def stop_processor(tasks: dict, timeout: float = 5.0):
     """
-    Call this after client.start()
-    Example:
-      await start_forwarder(app)
+    Cancel worker tasks and optionally wait for queue to drain.
     """
-    if getattr(client, "_queue_tasks", None):
-        return
-    client._queue_tasks = await start_processor(client)
-
-async def stop_forwarder(client, timeout: float = 10.0):
-    """
-    Call this before/after client.stop() to cleanup.
-    Example:
-      await stop_forwarder(app)
-    """
-    for t in getattr(client, "_queue_tasks", []):
+    for t in tasks.values():
         t.cancel()
     try:
         await asyncio.wait_for(message_queue.join(), timeout=timeout)
     except Exception:
         logger.info("Shutdown: queue join timeout or interrupted")
-    client._queue_tasks = []
 
 # ================= BUFFER HANDLER =================
 async def process_buffered_messages(source_chat_id):
     try:
         await asyncio.sleep(BUFFER_DELAY)
+
+        # Atomically pop buffered messages to avoid races with new arrivals
         messages = message_buffer.pop(source_chat_id, None)
         if not messages:
             return
@@ -281,9 +271,7 @@ async def process_buffered_messages(source_chat_id):
                 targets = mapping.get("target_ids", [])
                 if targets:
                     await message_queue.put((messages.copy(), targets, "buffered"))
-                    logger.info(
-                        f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets"
-                    )
+                    logger.info(f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets")
         except Exception:
             logger.exception("Buffer process error while queuing")
     except asyncio.CancelledError:
@@ -302,7 +290,7 @@ async def process_buffered_messages(source_chat_id):
 )
 async def forward_content(client, message):
     try:
-        # Debug logging: helpful to see what the source message holds
+        # debug info
         logger.debug(f"Received message id={getattr(message,'id',None)} from chat={getattr(message.chat,'id',None)}")
         if message.video and getattr(message.video, "thumb", None):
             logger.debug(f"Source has video.thumb: {message.video.thumb.file_id}")
