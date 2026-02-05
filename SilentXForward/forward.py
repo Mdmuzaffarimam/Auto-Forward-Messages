@@ -40,23 +40,14 @@ async def handle_flood(func, **kwargs):
 
 # ================= HELPER: preserve original cover =================
 async def _send_preserve_cover(client, message, chat_id, kwargs):
-    """
-    Strategy:
-    - If message.video exists: use copy_message (preserves thumbnail exactly).
-    - If message.document with video mime: download thumb (if any) and use send_video with file_id + thumb to preserve cover.
-    - Fallback: copy_message.
-    """
     thumb_path = None
     try:
-        # If original is a true video message -> copy preserves thumb
         if getattr(message, "video", None) is not None:
             await handle_flood(client.copy_message, **kwargs)
             return True
 
-        # If original is a document but mime indicates video -> try send_video with thumb
         doc = getattr(message, "document", None)
         if doc and getattr(doc, "mime_type", "").startswith("video"):
-            # Try to find thumb on document or message
             thumb_media = None
             if getattr(doc, "thumb", None):
                 thumb_media = doc.thumb
@@ -72,13 +63,12 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
 
             send_kwargs = {
                 "chat_id": chat_id,
-                "video": doc.file_id,  # pass file_id to avoid re-upload
+                "video": doc.file_id,
                 "caption": kwargs.get("caption"),
                 "caption_entities": kwargs.get("caption_entities"),
                 "supports_streaming": True,
             }
 
-            # duration/width/height may not be present on document, include if available
             duration = getattr(doc, "duration", None)
             width = getattr(doc, "width", None)
             height = getattr(doc, "height", None)
@@ -94,7 +84,6 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
             await handle_flood(client.send_video, **send_kwargs)
             return True
 
-        # Fallback: copy_message for other media types (keeps original)
         await handle_flood(client.copy_message, **kwargs)
         return True
 
@@ -109,7 +98,7 @@ async def _send_preserve_cover(client, message, chat_id, kwargs):
             except Exception:
                 logger.debug("Failed to remove temp thumb file", exc_info=True)
 
-# ================= SINGLE FORWARD (uses preserve cover helper) =================
+# ================= SINGLE FORWARD =================
 async def forward_single_message(client, message, chat_id):
     kwargs = {
         "chat_id": chat_id,
@@ -162,13 +151,38 @@ async def process_queue(client):
         message_queue.task_done()
         await asyncio.sleep(TARGET_DELAY)
 
-# ================= START PROCESSORS =================
+# ================= START/STOP PROCESSORS (call these from your bot) =================
 async def start_processor(client):
     tasks = []
     for i in range(QUEUE_WORKERS):
         tasks.append(asyncio.create_task(process_queue(client)))
     logger.info(f"{QUEUE_WORKERS} queue workers started")
     return tasks
+
+async def start_forwarder(client):
+    """
+    Call this after client.start()
+    Example:
+      await start_forwarder(app)
+    """
+    # prevent double-start
+    if getattr(client, "_queue_tasks", None):
+        return
+    client._queue_tasks = await start_processor(client)
+
+async def stop_forwarder(client, timeout: float = 5.0):
+    """
+    Call this before/after client.stop() to cleanup.
+    Example:
+      await stop_forwarder(app)
+    """
+    for t in getattr(client, "_queue_tasks", []):
+        t.cancel()
+    try:
+        await asyncio.wait_for(message_queue.join(), timeout=timeout)
+    except Exception:
+        logger.info("Shutdown: queue join timeout or interrupted")
+    client._queue_tasks = []
 
 # ================= BUFFER HANDLER =================
 async def process_buffered_messages(source_chat_id):
@@ -215,17 +229,3 @@ async def forward_content(client, message):
         buffer_tasks[cid] = asyncio.create_task(process_buffered_messages(cid))
     except Exception:
         logger.exception("Handler error")
-
-# ================= OPTIONAL: start/stop hooks for Client =================
-@Client.on_start()
-async def _on_start(client):
-    client._queue_tasks = await start_processor(client)
-
-@Client.on_stop()
-async def _on_stop(client):
-    for t in getattr(client, "_queue_tasks", []):
-        t.cancel()
-    try:
-        await asyncio.wait_for(message_queue.join(), timeout=5.0)
-    except Exception:
-        logger.info("Shutdown: queue join timeout or interrupted")
