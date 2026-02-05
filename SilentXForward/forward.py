@@ -113,6 +113,33 @@ async def start_processor(client):
     logger.info(f"{QUEUE_WORKERS} queue workers started")
     return tasks
 
+# ================= NEW: start_forwarder / stop_forwarder (Pyrogram-version safe) =================
+async def start_forwarder(client):
+    """
+    Call this after client.start() to ensure worker tasks are created and attached to client.
+    Example in bot.py:
+        await start_forwarder(app)
+    """
+    if getattr(client, "_queue_tasks", None):
+        # already started
+        return
+    client._queue_tasks = await start_processor(client)
+
+async def stop_forwarder(client, timeout: float = 5.0):
+    """
+    Cancel worker tasks stored on client._queue_tasks and wait for the queue to drain.
+    Example in bot.py:
+        await stop_forwarder(app)
+    """
+    tasks = getattr(client, "_queue_tasks", {}) or {}
+    for t in tasks.values():
+        t.cancel()
+    try:
+        await asyncio.wait_for(message_queue.join(), timeout=timeout)
+    except Exception:
+        logger.info("Shutdown: queue join timeout or interrupted")
+    client._queue_tasks = {}
+
 # ================= BUFFER HANDLER =================
 async def process_buffered_messages(source_chat_id):
     """
