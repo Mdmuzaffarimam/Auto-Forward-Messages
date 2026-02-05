@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from collections import defaultdict
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, RPCError
@@ -38,91 +37,26 @@ async def handle_flood(func, **kwargs):
             await asyncio.sleep(2 ** attempt)
     raise Exception("Max retries exceeded")
 
-# ================= HELPER: preserve original cover =================
-async def _send_preserve_cover(client, message, chat_id, kwargs):
-    """
-    Strategy:
-    - If message.video exists: use copy_message (preserves thumbnail exactly).
-    - If message.document with video mime: download thumb (if any) and use send_video with file_id + thumb to preserve cover.
-    - Fallback: copy_message.
-    """
-    thumb_path = None
+# ================= SINGLE FORWARD =================
+async def forward_single_message(client, message, chat_id):
     try:
-        # If original is a true video message -> copy preserves thumb
-        if getattr(message, "video", None) is not None:
-            await handle_flood(client.copy_message, **kwargs)
-            return True
+        kwargs = {
+            "chat_id": chat_id,
+            "from_chat_id": message.chat.id,
+            "message_id": message.id,
+        }
 
-        # If original is a document but mime indicates video -> try send_video with thumb
-        doc = getattr(message, "document", None)
-        if doc and getattr(doc, "mime_type", "").startswith("video"):
-            # Try to find thumb on document or message
-            thumb_media = None
-            if getattr(doc, "thumb", None):
-                thumb_media = doc.thumb
-            elif getattr(message, "thumbnail", None):
-                thumb_media = message.thumbnail
+        # For media with captions
+        if getattr(message, "caption", None):
+            kwargs["caption"] = message.caption
+            if getattr(message, "caption_entities", None):
+                kwargs["caption_entities"] = message.caption_entities
 
-            if thumb_media is not None:
-                try:
-                    thumb_path = await client.download_media(thumb_media)
-                except Exception:
-                    logger.exception("Failed to download original thumbnail; will try without thumb")
-                    thumb_path = None
-
-            send_kwargs = {
-                "chat_id": chat_id,
-                "video": doc.file_id,  # pass file_id to avoid re-upload
-                "caption": kwargs.get("caption"),
-                "caption_entities": kwargs.get("caption_entities"),
-                "supports_streaming": True,
-            }
-
-            # duration/width/height may not be present on document, include if available
-            duration = getattr(doc, "duration", None)
-            width = getattr(doc, "width", None)
-            height = getattr(doc, "height", None)
-            if duration:
-                send_kwargs["duration"] = duration
-            if width:
-                send_kwargs["width"] = width
-            if height:
-                send_kwargs["height"] = height
-            if thumb_path:
-                send_kwargs["thumb"] = thumb_path
-
-            await handle_flood(client.send_video, **send_kwargs)
-            return True
-
-        # Fallback: copy_message for other media types (keeps original)
         await handle_flood(client.copy_message, **kwargs)
         return True
-
     except Exception as e:
-        logger.error(f"Forward failed {getattr(message,'id',None)} -> {chat_id}: {e}")
+        logger.error(f"Forward failed {message.id} -> {chat_id}: {e}")
         return False
-    finally:
-        if thumb_path:
-            try:
-                if os.path.exists(thumb_path):
-                    os.remove(thumb_path)
-            except Exception:
-                logger.debug("Failed to remove temp thumb file", exc_info=True)
-
-# ================= SINGLE FORWARD (uses preserve cover helper) =================
-async def forward_single_message(client, message, chat_id):
-    kwargs = {
-        "chat_id": chat_id,
-        "from_chat_id": message.chat.id,
-        "message_id": message.id,
-    }
-
-    if getattr(message, "caption", None):
-        kwargs["caption"] = message.caption
-        if getattr(message, "caption_entities", None):
-            kwargs["caption_entities"] = message.caption_entities
-
-    return await _send_preserve_cover(client, message, chat_id, kwargs)
 
 # ================= BUFFER FORWARD =================
 async def forward_buffered_messages(client, messages, chat_id):
@@ -174,6 +108,9 @@ async def start_processor(client):
 async def process_buffered_messages(source_chat_id):
     try:
         await asyncio.sleep(BUFFER_DELAY)
+
+        # Atomically take and remove buffered messages to avoid race where
+        # new messages arrive between reading and popping the buffer.
         messages = message_buffer.pop(source_chat_id, None)
         if not messages:
             return
@@ -183,6 +120,7 @@ async def process_buffered_messages(source_chat_id):
             for mapping in mappings:
                 targets = mapping.get("target_ids", [])
                 if targets:
+                    # push a copy to avoid later mutation issues
                     await message_queue.put((messages.copy(), targets, "buffered"))
                     logger.info(
                         f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets"
@@ -190,11 +128,14 @@ async def process_buffered_messages(source_chat_id):
         except Exception:
             logger.exception("Buffer process error while queuing")
     except asyncio.CancelledError:
+        # Task was cancelled (e.g. because new message arrived and we rescheduled)
         logger.debug(f"Buffer task for {source_chat_id} cancelled")
+        # Let it propagate or just return; ensure cleanup in finally
         raise
     except Exception:
         logger.exception("Unexpected error in buffer processor")
     finally:
+        # ensure buffer task entry is removed
         buffer_tasks.pop(source_chat_id, None)
 
 # ================= MESSAGE LISTENER =================
@@ -206,8 +147,11 @@ async def process_buffered_messages(source_chat_id):
 async def forward_content(client, message):
     try:
         cid = message.chat.id
+        # Append to the buffer list (defaultdict will create list if absent)
         message_buffer[cid].append(message)
 
+        # If a buffer task is already scheduled, cancel it and schedule a new one.
+        # Cancelling causes the old task to exit early and the new one will handle the buffer after BUFFER_DELAY.
         old = buffer_tasks.get(cid)
         if old and not old.done():
             old.cancel()
@@ -217,14 +161,17 @@ async def forward_content(client, message):
         logger.exception("Handler error")
 
 # ================= OPTIONAL: start/stop hooks for Client =================
+# These ensure processors are started when client starts and cancelled on stop.
 @Client.on_start()
 async def _on_start(client):
     client._queue_tasks = await start_processor(client)
 
 @Client.on_stop()
 async def _on_stop(client):
+    # cancel worker tasks
     for t in getattr(client, "_queue_tasks", []):
         t.cancel()
+    # optionally wait for queue to drain (or set a timeout)
     try:
         await asyncio.wait_for(message_queue.join(), timeout=5.0)
     except Exception:
