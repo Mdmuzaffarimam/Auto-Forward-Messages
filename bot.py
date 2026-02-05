@@ -1,9 +1,7 @@
 import time
-import asyncio
-import logging
 import threading
-import pyrogram.utils
 import urllib.request
+import logging
 from aiohttp import web
 from pyrogram import Client
 from SilentXForward.forward import start_forwarder, stop_forwarder
@@ -28,7 +26,7 @@ def ping_loop():
 
 if APP_URL:
     threading.Thread(target=ping_loop, daemon=True).start()
-    
+
 async def create_server():
     try:
         app = web.AppRunner(await web_server())
@@ -54,18 +52,17 @@ class Bot(Client):
         await super().start(*args, **kwargs)
         me = await self.get_me()
         logger.info(f"Bot Started! Name: {me.first_name} (@{me.username})")
-        
+
         if WEB_SERVER:
             await create_server()
-            
-        # start_forwarder will create/attach worker tasks to client._queue_tasks
+
+        # start forwarder workers (safe for different Pyrogram versions)
         await start_forwarder(self)
         tasks = getattr(self, "_queue_tasks", [])
         logger.info(f"✅ Auto Forwarding Started — workers: {len(tasks)}")
 
     async def stop(self, *args, **kwargs):
         logger.info("🛑 Stopping Auto Forwarding...")
-        # stop_forwarder will cancel workers and wait for queue join
         await stop_forwarder(self)
         await super().stop(*args, **kwargs)
         logger.info("Bot Stopped")
