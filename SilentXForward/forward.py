@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import tempfile
 from collections import defaultdict
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, RPCError
@@ -39,60 +38,50 @@ async def handle_flood(func, **kwargs):
             await asyncio.sleep(2 ** attempt)
     raise Exception("Max retries exceeded")
 
-# ================= HELPER: prepare & send (with video thumb support) =================
-async def _send_media_with_thumb(client, message, chat_id, kwargs):
+# ================= HELPER: preserve original cover =================
+async def _send_preserve_cover(client, message, chat_id, kwargs):
     """
-    If message is a video (or a document with video mime), use send_video to ensure preview/cover.
-    Otherwise fall back to copy_message.
+    Strategy:
+    - If message.video exists: use copy_message (preserves thumbnail exactly).
+    - If message.document with video mime: download thumb (if any) and use send_video with file_id + thumb to preserve cover.
+    - Fallback: copy_message.
     """
     thumb_path = None
     try:
-        # Detect video cases
-        is_video = getattr(message, "video", None) is not None
-        is_doc_video = False
+        # If original is a true video message -> copy preserves thumb
+        if getattr(message, "video", None) is not None:
+            await handle_flood(client.copy_message, **kwargs)
+            return True
+
+        # If original is a document but mime indicates video -> try send_video with thumb
         doc = getattr(message, "document", None)
         if doc and getattr(doc, "mime_type", "").startswith("video"):
-            is_doc_video = True
-
-        if is_video or is_doc_video:
-            # file id for the actual video (works without downloading content)
-            if is_video:
-                video_file = message.video.file_id
-                duration = getattr(message.video, "duration", None)
-                width = getattr(message.video, "width", None)
-                height = getattr(message.video, "height", None)
-            else:
-                video_file = message.document.file_id
-                duration = getattr(message.document, "duration", None)
-                # document might not have width/height
-                width = getattr(message.document, "width", None)
-                height = getattr(message.document, "height", None)
-
-            # Try to get thumbnail (different attribute names across versions)
+            # Try to find thumb on document or message
             thumb_media = None
-            if is_video and getattr(message.video, "thumb", None):
-                thumb_media = message.video.thumb
+            if getattr(doc, "thumb", None):
+                thumb_media = doc.thumb
             elif getattr(message, "thumbnail", None):
                 thumb_media = message.thumbnail
-            elif doc and getattr(doc, "thumb", None):
-                thumb_media = doc.thumb
 
             if thumb_media is not None:
                 try:
-                    # download thumbnail to a temp file
                     thumb_path = await client.download_media(thumb_media)
                 except Exception:
-                    logger.exception("Failed to download thumb, continuing without it")
+                    logger.exception("Failed to download original thumbnail; will try without thumb")
                     thumb_path = None
 
             send_kwargs = {
                 "chat_id": chat_id,
-                "video": video_file,
+                "video": doc.file_id,  # pass file_id to avoid re-upload
                 "caption": kwargs.get("caption"),
                 "caption_entities": kwargs.get("caption_entities"),
                 "supports_streaming": True,
             }
-            # only set if not None
+
+            # duration/width/height may not be present on document, include if available
+            duration = getattr(doc, "duration", None)
+            width = getattr(doc, "width", None)
+            height = getattr(doc, "height", None)
             if duration:
                 send_kwargs["duration"] = duration
             if width:
@@ -102,11 +91,10 @@ async def _send_media_with_thumb(client, message, chat_id, kwargs):
             if thumb_path:
                 send_kwargs["thumb"] = thumb_path
 
-            # Use handle_flood wrapper for retries
             await handle_flood(client.send_video, **send_kwargs)
             return True
 
-        # fallback - non-video: use copy_message (keeps original file type)
+        # Fallback: copy_message for other media types (keeps original)
         await handle_flood(client.copy_message, **kwargs)
         return True
 
@@ -114,7 +102,6 @@ async def _send_media_with_thumb(client, message, chat_id, kwargs):
         logger.error(f"Forward failed {getattr(message,'id',None)} -> {chat_id}: {e}")
         return False
     finally:
-        # cleanup temp thumb file
         if thumb_path:
             try:
                 if os.path.exists(thumb_path):
@@ -122,7 +109,7 @@ async def _send_media_with_thumb(client, message, chat_id, kwargs):
             except Exception:
                 logger.debug("Failed to remove temp thumb file", exc_info=True)
 
-# ================= SINGLE FORWARD (updated) =================
+# ================= SINGLE FORWARD (uses preserve cover helper) =================
 async def forward_single_message(client, message, chat_id):
     kwargs = {
         "chat_id": chat_id,
@@ -130,13 +117,12 @@ async def forward_single_message(client, message, chat_id):
         "message_id": message.id,
     }
 
-    # For media with captions
     if getattr(message, "caption", None):
         kwargs["caption"] = message.caption
         if getattr(message, "caption_entities", None):
             kwargs["caption_entities"] = message.caption_entities
 
-    return await _send_media_with_thumb(client, message, chat_id, kwargs)
+    return await _send_preserve_cover(client, message, chat_id, kwargs)
 
 # ================= BUFFER FORWARD =================
 async def forward_buffered_messages(client, messages, chat_id):
@@ -188,8 +174,6 @@ async def start_processor(client):
 async def process_buffered_messages(source_chat_id):
     try:
         await asyncio.sleep(BUFFER_DELAY)
-
-        # Atomically pop the buffer to avoid races
         messages = message_buffer.pop(source_chat_id, None)
         if not messages:
             return
