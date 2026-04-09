@@ -8,12 +8,12 @@ from SilentXForward import database
 # ================= CONFIG =================
 BUFFER_DELAY = 0.1        # minimum buffering
 QUEUE_WORKERS = 20        # maximum workers
-TARGET_CONCURRENCY = 100   # 100 targets → 50 parallel ek baar mein
+TARGET_CONCURRENCY = 50   # 100 targets → 50 parallel ek baar mein
 MSG_DELAY = 0.0           # zero delay between messages
 TARGET_DELAY = 0.0        # zero delay between targets
 MAX_RETRIES = 3
-BATCH_SIZE = 100           # 100 targets → sirf 2 batches
-BATCH_REST = 0.0          # batches ke beech minimum rest
+BATCH_SIZE = 50           # 100 targets → sirf 2 batches
+BATCH_REST = 0.2          # batches ke beech minimum rest
 # ==========================================
 
 logging.basicConfig(level=logging.INFO)
