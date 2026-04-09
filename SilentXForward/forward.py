@@ -6,14 +6,14 @@ from pyrogram.errors import FloodWait, RPCError
 from SilentXForward import database
 
 # ================= CONFIG =================
-BUFFER_DELAY = 0.3        # था 2    → messages jaldi queue mein
-QUEUE_WORKERS = 10        # था 3    → zyada parallel workers
-TARGET_CONCURRENCY = 20   # था 3    → ek baar mein 20 targets
-MSG_DELAY = 0.03          # था 0.1  → messages ke beech kam wait
-TARGET_DELAY = 0.02       # था 0.15 → targets ke beech kam wait
+BUFFER_DELAY = 0.1        # minimum buffering
+QUEUE_WORKERS = 20        # maximum workers
+TARGET_CONCURRENCY = 50   # 100 targets → 50 parallel ek baar mein
+MSG_DELAY = 0.0           # zero delay between messages
+TARGET_DELAY = 0.0        # zero delay between targets
 MAX_RETRIES = 3
-BATCH_SIZE = 20           # 100 targets → 5 batches of 20
-BATCH_REST = 0.5          # batches ke beech rest (FloodWait se bachao)
+BATCH_SIZE = 50           # 100 targets → sirf 2 batches
+BATCH_REST = 0.2          # batches ke beech minimum rest
 # ==========================================
 
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +63,7 @@ async def forward_buffered_messages(client, messages, chat_id):
                 success += 1
         except Exception:
             logger.exception(f"Error forwarding buffered msg {getattr(msg, 'id', None)} -> {chat_id}")
-        await asyncio.sleep(MSG_DELAY)
+        # MSG_DELAY = 0.0 → no sleep needed
     logger.info(f"Buffered forwarded {success}/{len(messages)} -> {chat_id}")
     return success > 0
 
@@ -82,7 +82,7 @@ async def process_queue(client):
             payload, targets, ftype, retry_count = await message_queue.get()
             failed = []
 
-            # ---- BATCH PROCESSING (100 targets ke liye) ----
+            # ---- ULTRA FAST BATCH PROCESSING ----
             for i in range(0, len(targets), BATCH_SIZE):
                 batch = targets[i : i + BATCH_SIZE]
                 tasks = [forward_target(tid, payload, ftype) for tid in batch]
@@ -95,10 +95,10 @@ async def process_queue(client):
                     elif res is not True:
                         failed.append(tid)
 
-                # Batches ke beech thoda rest — Telegram rate limit se bachao
+                # Sirf batches ke beech rest, targets ke beech nahi
                 if i + BATCH_SIZE < len(targets):
                     await asyncio.sleep(BATCH_REST)
-            # -------------------------------------------------
+            # -------------------------------------
 
             if failed:
                 if retry_count < MAX_RETRIES:
@@ -108,18 +108,17 @@ async def process_queue(client):
                     logger.error(f"Giving up on {len(failed)} targets after {MAX_RETRIES} retries: {failed}")
 
             message_queue.task_done()
-            await asyncio.sleep(TARGET_DELAY)
+            # TARGET_DELAY = 0.0 → no sleep
 
         except asyncio.CancelledError:
             logger.info("Queue worker cancelled, shutting down")
             raise
         except Exception:
             logger.exception("Unexpected error in queue worker — continuing")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
 # ================= WATCHDOG =================
 async def worker_watchdog(client):
-    """Dead workers ko automatically restart karta hai."""
     while True:
         try:
             await asyncio.sleep(10)
