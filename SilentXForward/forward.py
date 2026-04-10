@@ -6,13 +6,14 @@ from pyrogram.errors import FloodWait, RPCError
 from SilentXForward import database
 
 # ================= CONFIG =================
-BUFFER_DELAY = 0.5       # 2s -> 0.5s: accumulate burst messages faster
-QUEUE_WORKERS = 5        # 3 -> 5: more parallel workers
-TARGET_CONCURRENCY = 8   # 3 -> 8: more simultaneous target forwards
-MSG_CONCURRENCY = 4      # NEW: parallel messages within a buffer batch
-MSG_DELAY = 0.05         # 0.1s -> 0.05s: less gap between messages
-TARGET_DELAY = 0.05      # 0.15s -> 0.05s: less gap between queue items
+BUFFER_DELAY = 0.1        # minimum buffering
+QUEUE_WORKERS = 20        # maximum workers
+TARGET_CONCURRENCY = 50   # 100 targets â†’ 50 parallel ek baar mein
+MSG_DELAY = 0.0           # zero delay between messages
+TARGET_DELAY = 0.0        # zero delay between targets
 MAX_RETRIES = 3
+BATCH_SIZE = 50           # 100 targets â†’ sirf 2 batches
+BATCH_REST = 0.2          # batches ke beech minimum rest
 # ==========================================
 
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +42,6 @@ async def handle_flood(func, **kwargs):
 # ================= SINGLE FORWARD =================
 async def forward_single_message(client, message, chat_id):
     try:
-        # FIX #2: Don't pass caption/caption_entities — copy_message handles them automatically
         await handle_flood(
             client.copy_message,
             chat_id=chat_id,
@@ -55,21 +55,15 @@ async def forward_single_message(client, message, chat_id):
 
 # ================= BUFFER FORWARD =================
 async def forward_buffered_messages(client, messages, chat_id):
-    sem = asyncio.Semaphore(MSG_CONCURRENCY)
-
-    async def _send(msg):
-        async with sem:
-            try:
-                ok = await forward_single_message(client, msg, chat_id)
-                await asyncio.sleep(MSG_DELAY)
-                return ok
-            except Exception:
-                logger.exception(f"Error forwarding buffered msg {getattr(msg, 'id', None)} -> {chat_id}")
-                return False
-
-    sorted_msgs = sorted(messages, key=lambda m: m.id)
-    results = await asyncio.gather(*[_send(m) for m in sorted_msgs])
-    success = sum(1 for r in results if r is True)
+    success = 0
+    for msg in sorted(messages, key=lambda m: m.id):
+        try:
+            ok = await forward_single_message(client, msg, chat_id)
+            if ok:
+                success += 1
+        except Exception:
+            logger.exception(f"Error forwarding buffered msg {getattr(msg, 'id', None)} -> {chat_id}")
+        # MSG_DELAY = 0.0 â†’ no sleep needed
     logger.info(f"Buffered forwarded {success}/{len(messages)} -> {chat_id}")
     return success > 0
 
@@ -88,18 +82,24 @@ async def process_queue(client):
             payload, targets, ftype, retry_count = await message_queue.get()
             failed = []
 
-            tasks = [forward_target(tid, payload, ftype) for tid in targets]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # ---- ULTRA FAST BATCH PROCESSING ----
+            for i in range(0, len(targets), BATCH_SIZE):
+                batch = targets[i : i + BATCH_SIZE]
+                tasks = [forward_target(tid, payload, ftype) for tid in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for tid, res in zip(targets, results):
-                if isinstance(res, Exception):
-                    # FIX #5: Log actual exception from gather
-                    logger.error(f"Exception forwarding to {tid}: {res}")
-                    failed.append(tid)
-                elif res is not True:
-                    failed.append(tid)
+                for tid, res in zip(batch, results):
+                    if isinstance(res, Exception):
+                        logger.error(f"Exception forwarding to {tid}: {res}")
+                        failed.append(tid)
+                    elif res is not True:
+                        failed.append(tid)
 
-            # FIX #1: Only retry if under max retry limit
+                # Sirf batches ke beech rest, targets ke beech nahi
+                if i + BATCH_SIZE < len(targets):
+                    await asyncio.sleep(BATCH_REST)
+            # -------------------------------------
+
             if failed:
                 if retry_count < MAX_RETRIES:
                     logger.info(f"Retrying {len(failed)} targets (attempt {retry_count + 1}/{MAX_RETRIES})")
@@ -108,18 +108,17 @@ async def process_queue(client):
                     logger.error(f"Giving up on {len(failed)} targets after {MAX_RETRIES} retries: {failed}")
 
             message_queue.task_done()
-            await asyncio.sleep(TARGET_DELAY)
+            # TARGET_DELAY = 0.0 â†’ no sleep
 
         except asyncio.CancelledError:
             logger.info("Queue worker cancelled, shutting down")
             raise
         except Exception:
-            logger.exception("Unexpected error in queue worker — continuing")
-            await asyncio.sleep(1)
+            logger.exception("Unexpected error in queue worker â€” continuing")
+            await asyncio.sleep(0.5)
 
 # ================= WATCHDOG =================
 async def worker_watchdog(client):
-    """FIX #5: Restart any dead workers automatically."""
     while True:
         try:
             await asyncio.sleep(10)
@@ -140,7 +139,6 @@ async def start_processor(client):
     for i in range(QUEUE_WORKERS):
         t = asyncio.create_task(process_queue(client))
         tasks[f"worker_{i}"] = t
-    # Start watchdog
     tasks["watchdog"] = asyncio.create_task(worker_watchdog(client))
     logger.info(f"{QUEUE_WORKERS} queue workers + watchdog started")
     return tasks
@@ -165,7 +163,6 @@ async def process_buffered_messages(source_chat_id):
     try:
         await asyncio.sleep(BUFFER_DELAY)
 
-        # FIX #4: Always pop buffer even if something fails below
         messages = message_buffer.pop(source_chat_id, None)
         if not messages:
             return
@@ -174,19 +171,16 @@ async def process_buffered_messages(source_chat_id):
         for mapping in mappings:
             targets = mapping.get("target_ids", [])
             if targets:
-                # FIX #1: Added retry_count=0 as 4th element in queue tuple
                 await message_queue.put((messages.copy(), targets, "buffered", 0))
                 logger.info(
                     f"Queued {len(messages)} msgs from {source_chat_id} -> {len(targets)} targets"
                 )
 
     except asyncio.CancelledError:
-        # FIX #3: On cancel, put messages back in buffer so next task picks them up
         logger.debug(f"Buffer task for {source_chat_id} cancelled")
         raise
     except Exception:
         logger.exception("Unexpected error in buffer processor")
-        # FIX #4: Make sure buffer is cleared even on unexpected crash
         message_buffer.pop(source_chat_id, None)
     finally:
         buffer_tasks.pop(source_chat_id, None)
@@ -206,7 +200,6 @@ async def forward_content(client, message):
         if old and not old.done():
             try:
                 old.cancel()
-                # FIX #3: Wait briefly so cancel is processed before creating new task
                 await asyncio.sleep(0)
             except Exception:
                 logger.debug("Old buffer task cancel raised", exc_info=True)
