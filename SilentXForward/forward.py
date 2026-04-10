@@ -1,23 +1,28 @@
 import asyncio
 import logging
+import os
 from collections import defaultdict
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, RPCError
+from pyrogram.types import Message
 from SilentXForward import database
 
 # ================= CONFIG =================
-BUFFER_DELAY = 0.1        # minimum buffering
-QUEUE_WORKERS = 20        # maximum workers
-TARGET_CONCURRENCY = 50   # 100 targets → 50 parallel ek baar mein
-MSG_DELAY = 0.0           # zero delay between messages
-TARGET_DELAY = 0.0        # zero delay between targets
+BUFFER_DELAY = 0.5
+QUEUE_WORKERS = 20
+TARGET_CONCURRENCY = 50
+MSG_DELAY = 0.05
+TARGET_DELAY = 0.0
 MAX_RETRIES = 3
-BATCH_SIZE = 50           # 100 targets → sirf 2 batches
-BATCH_REST = 0.2          # batches ke beech minimum rest
+BATCH_SIZE = 50
+BATCH_REST = 0.2
+THUMB_DIR = "thumbs"  # thumbnail cache folder
 # ==========================================
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+os.makedirs(THUMB_DIR, exist_ok=True)
 
 message_queue = asyncio.Queue()
 message_buffer = defaultdict(list)
@@ -39,22 +44,64 @@ async def handle_flood(func, **kwargs):
             await asyncio.sleep(2 ** attempt)
     raise Exception("Max retries exceeded in handle_flood")
 
-# ================= SINGLE FORWARD =================
-async def forward_single_message(client, message, chat_id):
+# ================= THUMBNAIL EXTRACTOR =================
+async def get_thumbnail(client: Client, message: Message) -> str | None:
+    """
+    Message se thumbnail path nikalta hai.
+    Agar video/document mein thumb hai toh download karta hai.
+    """
     try:
+        thumb = None
+
+        if message.video and message.video.thumbs:
+            thumb = message.video.thumbs[0]
+        elif message.document and message.document.thumbs:
+            thumb = message.document.thumbs[0]
+
+        if thumb:
+            thumb_path = os.path.join(THUMB_DIR, f"{message.id}_{thumb.file_id}.jpg")
+            # Already downloaded hai toh reuse karo
+            if not os.path.exists(thumb_path):
+                await client.download_media(thumb.file_id, file_name=thumb_path)
+            return thumb_path
+
+    except Exception:
+        logger.warning(f"Thumbnail extract failed for msg_id={message.id}")
+
+    return None
+
+# ================= SINGLE FORWARD =================
+async def forward_single_message(client: Client, message: Message, chat_id: int):
+    try:
+        thumb_path = await get_thumbnail(client, message)
+
+        extra = {}
+        if thumb_path:
+            extra["thumb"] = thumb_path
+
         await handle_flood(
             client.copy_message,
             chat_id=chat_id,
             from_chat_id=message.chat.id,
             message_id=message.id,
+            **extra,
         )
         return True
     except Exception:
         logger.exception(f"Forward failed msg_id={getattr(message, 'id', None)} -> {chat_id}")
         return False
 
+# ================= THUMBNAIL CLEANUP =================
+async def cleanup_thumb(thumb_path: str | None):
+    """Forward ke baad thumbnail delete karo disk space bachao."""
+    try:
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
+    except Exception:
+        pass
+
 # ================= BUFFER FORWARD =================
-async def forward_buffered_messages(client, messages, chat_id):
+async def forward_buffered_messages(client: Client, messages: list, chat_id: int):
     success = 0
     for msg in sorted(messages, key=lambda m: m.id):
         try:
@@ -63,12 +110,12 @@ async def forward_buffered_messages(client, messages, chat_id):
                 success += 1
         except Exception:
             logger.exception(f"Error forwarding buffered msg {getattr(msg, 'id', None)} -> {chat_id}")
-        # MSG_DELAY = 0.0 → no sleep needed
+        await asyncio.sleep(MSG_DELAY)
     logger.info(f"Buffered forwarded {success}/{len(messages)} -> {chat_id}")
     return success > 0
 
 # ================= QUEUE WORKER =================
-async def process_queue(client):
+async def process_queue(client: Client):
     sem = asyncio.Semaphore(TARGET_CONCURRENCY)
 
     async def forward_target(chat_id, payload, ftype):
@@ -82,7 +129,7 @@ async def process_queue(client):
             payload, targets, ftype, retry_count = await message_queue.get()
             failed = []
 
-            # ---- ULTRA FAST BATCH PROCESSING ----
+            # ---- BATCH PROCESSING ----
             for i in range(0, len(targets), BATCH_SIZE):
                 batch = targets[i : i + BATCH_SIZE]
                 tasks = [forward_target(tid, payload, ftype) for tid in batch]
@@ -95,10 +142,21 @@ async def process_queue(client):
                     elif res is not True:
                         failed.append(tid)
 
-                # Sirf batches ke beech rest, targets ke beech nahi
                 if i + BATCH_SIZE < len(targets):
                     await asyncio.sleep(BATCH_REST)
-            # -------------------------------------
+            # --------------------------
+
+            # Thumbnail cleanup after all targets done
+            if ftype == "buffered":
+                for msg in payload:
+                    thumb_path = os.path.join(
+                        THUMB_DIR,
+                        f"{msg.id}_*.jpg"
+                    )
+                    # glob se sab thumbnails clean karo
+                    import glob
+                    for f in glob.glob(thumb_path):
+                        await cleanup_thumb(f)
 
             if failed:
                 if retry_count < MAX_RETRIES:
@@ -108,7 +166,6 @@ async def process_queue(client):
                     logger.error(f"Giving up on {len(failed)} targets after {MAX_RETRIES} retries: {failed}")
 
             message_queue.task_done()
-            # TARGET_DELAY = 0.0 → no sleep
 
         except asyncio.CancelledError:
             logger.info("Queue worker cancelled, shutting down")
@@ -118,7 +175,7 @@ async def process_queue(client):
             await asyncio.sleep(0.5)
 
 # ================= WATCHDOG =================
-async def worker_watchdog(client):
+async def worker_watchdog(client: Client):
     while True:
         try:
             await asyncio.sleep(10)
@@ -134,7 +191,7 @@ async def worker_watchdog(client):
             logger.exception("Watchdog error")
 
 # ================= START PROCESSORS =================
-async def start_processor(client):
+async def start_processor(client: Client):
     tasks = {}
     for i in range(QUEUE_WORKERS):
         t = asyncio.create_task(process_queue(client))
@@ -143,12 +200,12 @@ async def start_processor(client):
     logger.info(f"{QUEUE_WORKERS} queue workers + watchdog started")
     return tasks
 
-async def start_forwarder(client):
+async def start_forwarder(client: Client):
     if getattr(client, "_queue_tasks", None):
         return
     client._queue_tasks = await start_processor(client)
 
-async def stop_forwarder(client, timeout: float = 5.0):
+async def stop_forwarder(client: Client, timeout: float = 5.0):
     tasks = getattr(client, "_queue_tasks", {}) or {}
     for t in tasks.values():
         t.cancel()
@@ -159,7 +216,7 @@ async def stop_forwarder(client, timeout: float = 5.0):
     client._queue_tasks = {}
 
 # ================= BUFFER HANDLER =================
-async def process_buffered_messages(source_chat_id):
+async def process_buffered_messages(source_chat_id: int):
     try:
         await asyncio.sleep(BUFFER_DELAY)
 
@@ -191,7 +248,7 @@ async def process_buffered_messages(source_chat_id):
     (filters.video | filters.document | filters.photo |
      filters.audio | filters.sticker | filters.animation | filters.text)
 )
-async def forward_content(client, message):
+async def forward_content(client: Client, message: Message):
     try:
         cid = message.chat.id
         message_buffer[cid].append(message)
